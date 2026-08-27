@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.idea/
+
+# Secrets -- .env.example documents the variables, real values stay local.
+.env
+Grader/.env
+
+# Generated/ephemeral, not source -- code recreates these dirs at runtime.
+downloads/
+Grader/downloads/
+storage/*
+!storage/.gitkeep
+scratch/
+Grader/scratch/

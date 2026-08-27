@@ -1,0 +1,8 @@
+psycopg2-binary==2.9.12
+python-dotenv==1.2.3
+minio==7.2.20
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+python-multipart==0.0.32
+docker==7.2.0
+httpx==0.28.1

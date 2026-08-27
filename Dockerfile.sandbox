@@ -1,0 +1,11 @@
+FROM python:3.12-slim
+
+# A minimal, mostly-stdlib runtime for student solutions. Add packages here
+# as tasks need them -- keep it small, since this image is what runs
+# untrusted code (alongside the sandbox's own network/memory/pids/fs limits
+# applied at container-run time by sandbox.py).
+RUN pip install --no-cache-dir numpy pandas \
+ && useradd --uid 65532 --create-home --shell /usr/sbin/nologin sandboxuser
+
+WORKDIR /sandbox
+USER sandboxuser
