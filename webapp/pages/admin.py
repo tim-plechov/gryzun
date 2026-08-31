@@ -51,7 +51,6 @@ def _teachers_panel() -> None:
         picker.update()
 
     ui.button("Refresh", on_click=refresh).props("outline")
-    refresh()
 
     ui.separator().classes("q-my-md")
     ui.label("Add a teacher or admin").classes("text-h6")
@@ -98,6 +97,8 @@ def _teachers_panel() -> None:
         ui.button("Activate", on_click=activate).props("outline color=positive")
         ui.button("Reset password", on_click=reset_pw).props("outline")
 
+    refresh()
+
 
 def _students_panel() -> None:
     table = ui.table(
@@ -119,7 +120,6 @@ def _students_panel() -> None:
         picker.update()
 
     ui.button("Refresh", on_click=refresh).props("outline")
-    refresh()
 
     ui.separator().classes("q-my-md")
     ui.label("Add a student").classes("text-h6")
@@ -158,3 +158,5 @@ def _students_panel() -> None:
         _show_temp_password(label, temp_password)
 
     ui.button("Reset password", on_click=reset_pw).props("outline")
+
+    refresh()
