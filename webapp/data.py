@@ -21,6 +21,7 @@ over HTTP, exactly like Grader/student_interface.ipynb already does.
 
 import os
 import sys
+import zipfile
 from pathlib import Path
 
 import httpx
@@ -291,12 +292,25 @@ def student_get_submission(student_id: str, submission_id: str):
 
 
 def student_download_package(task_id: str, student_id: str):
-    """Sample (never hidden-test) input/output files for one assigned task,
-    as a zip Path -- same package a teacher can export, but gated by
-    assignment rather than open to any task_id."""
+    """Sample INPUT files only for one assigned task, as a zip Path --
+    students get the input format, not the expected output (unlike the
+    teacher's build_task_package, which includes both so a teacher can
+    verify a task's own sample cases). Hidden ('test') files are never
+    included either way. Gated by assignment, not open to any task_id."""
     if not is_task_assigned(task_id, student_id):
         return None
-    return db.build_task_package(task_id)
+    task = db.get_task(task_id)
+    if task is None:
+        return None
+    sample_datasets = [d for d in db.get_task_datasets(task_id) if d["dataset_type"] == "sample"]
+
+    zip_path = db.DOWNLOADS_ROOT / f"{task_id}-sample-inputs.zip"
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("task.md", f"# {task['title']}\n\n{task['description']}\n")
+        for i, ds in enumerate(sample_datasets, 1):
+            in_suffix = Path(ds["input_storage_key"]).suffix
+            zf.writestr(f"sample_{i}_input{in_suffix}", db.read_file_bytes(ds["input_storage_key"]))
+    return zip_path
 
 
 def student_submit_solution(student: dict, task_id: str, filename: str, content: bytes) -> dict:

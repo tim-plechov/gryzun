@@ -40,7 +40,7 @@ def student_page() -> None:
             return
         ui.download(zip_path.read_bytes(), zip_path.name)
 
-    ui.button("Download sample input/output", on_click=download_samples).props("outline")
+    ui.button("Download sample input(s)", on_click=download_samples).props("outline")
 
     uploaded: dict = {}
     upload_label = ui.label("No file uploaded yet.").classes("text-caption")
