@@ -290,6 +290,15 @@ def student_get_submission(student_id: str, submission_id: str):
     return _student_view(submission)
 
 
+def student_download_package(task_id: str, student_id: str):
+    """Sample (never hidden-test) input/output files for one assigned task,
+    as a zip Path -- same package a teacher can export, but gated by
+    assignment rather than open to any task_id."""
+    if not is_task_assigned(task_id, student_id):
+        return None
+    return db.build_task_package(task_id)
+
+
 def student_submit_solution(student: dict, task_id: str, filename: str, content: bytes) -> dict:
     if not is_task_assigned(task_id, student["id"]):
         return {"error": "This task hasn't been assigned to you."}

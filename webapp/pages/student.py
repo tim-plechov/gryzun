@@ -30,6 +30,18 @@ def student_page() -> None:
     task_options = {t["id"]: f"{t['title']} ({t['topic']} / {t['level']})" for t in tasks}
     task_select = ui.select(task_options, label="Task").classes("w-96")
 
+    def download_samples() -> None:
+        if not task_select.value:
+            ui.notify("Pick a task first.", color="negative")
+            return
+        zip_path = data.student_download_package(task_select.value, account["id"])
+        if zip_path is None:
+            ui.notify("This task hasn't been assigned to you.", color="negative")
+            return
+        ui.download(zip_path.read_bytes(), zip_path.name)
+
+    ui.button("Download sample input/output", on_click=download_samples).props("outline")
+
     uploaded: dict = {}
     upload_label = ui.label("No file uploaded yet.").classes("text-caption")
 
