@@ -75,6 +75,11 @@ Grader/                       everything the API container needs to build & run
   requirements-api.txt         deps for just the API image
   student_interface.ipynb     student notebook -- submit & check grades via HTTP
   .env                        standalone (non-compose) run config, see below
+
+webapp/                       login-gated web app for students/teachers/admins
+                               (see webapp/README.md) -- runs alongside the
+                               notebooks/api above, unmodified, without
+                               changing them
 ```
 
 `db.py` intentionally exists in two places with identical content: the root
