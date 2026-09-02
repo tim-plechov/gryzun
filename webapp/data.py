@@ -33,6 +33,8 @@ import zipfile
 from pathlib import Path
 
 import httpx
+import psycopg2
+import psycopg2.errors
 import psycopg2.extras
 from dotenv import load_dotenv
 
@@ -224,6 +226,32 @@ def list_groups() -> list[str]:
         with conn.cursor() as cur:
             cur.execute("SELECT DISTINCT group_name FROM students WHERE group_name IS NOT NULL ORDER BY group_name")
             return [r[0] for r in cur.fetchall()]
+
+
+# --------------------------------------------------------- task management --
+
+def set_task_status(task_id: str, status: str) -> None:
+    if status not in ("draft", "published", "archived"):
+        raise ValueError(f"invalid status: {status}")
+    with db.get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE tasks SET status = %s, updated_at = now() WHERE id = %s", (status, task_id))
+
+
+def delete_task(task_id: str) -> str | None:
+    """Deletes a task, its datasets, and its assignments (cascade). Returns
+    an error message if it can't be deleted, or None on success. Deletion
+    is blocked -- schema.sql gives submissions.task_id no cascade, by
+    design -- once any student has submitted, so grading history is never
+    silently destroyed; archive the task instead."""
+    try:
+        with db.get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM tasks WHERE id = %s", (task_id,))
+                deleted = cur.rowcount
+    except psycopg2.errors.ForeignKeyViolation:
+        return "Can't delete: this task already has student submissions. Archive it instead."
+    return None if deleted else "Task not found."
 
 
 # -------------------------------------------------------- task assignment --

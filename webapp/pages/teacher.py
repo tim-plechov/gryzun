@@ -169,15 +169,53 @@ def _manage_tasks_panel(account: dict) -> None:
         task_id = task_picker.value
         if not task_id:
             return
+        task = data.get_task(task_id)
+        if task is None:
+            return
         students = data.list_students_full()
         groups = data.list_groups()
         with assignment_area:
-            with ui.row():
+            with ui.row().classes("items-center"):
                 def download() -> None:
                     zip_path = data.build_task_package(task_id)
                     ui.download(zip_path.read_bytes(), zip_path.name)
 
                 ui.button("Download sample package (.zip)", on_click=download).props("outline")
+
+                status_select = ui.select({s: s for s in STATUS_OPTIONS}, value=task["status"], label="Status").classes("w-40")
+
+                def update_status() -> None:
+                    data.set_task_status(task_id, status_select.value)
+                    ui.notify(f"Status set to {status_select.value}.", color="positive")
+                    refresh_tasks()
+
+                ui.button("Update status", on_click=update_status).props("outline")
+
+                def confirm_delete() -> None:
+                    with ui.dialog() as dialog, ui.card():
+                        ui.label(f'Delete task "{task["title"]}"?').classes("text-h6")
+                        ui.label(
+                            "This also removes its datasets and student assignments. It cannot be undone. "
+                            "Tasks with existing student submissions can't be deleted -- archive them instead."
+                        ).classes("text-caption")
+
+                        def do_delete() -> None:
+                            error = data.delete_task(task_id)
+                            dialog.close()
+                            if error:
+                                ui.notify(error, color="negative")
+                                return
+                            ui.notify("Task deleted.", color="positive")
+                            task_picker.value = None
+                            refresh_tasks()
+                            assignment_area.clear()
+
+                        with ui.row():
+                            ui.button("Delete", on_click=do_delete).props("color=negative")
+                            ui.button("Cancel", on_click=dialog.close).props("flat")
+                    dialog.open()
+
+                ui.button("Delete task", on_click=confirm_delete).props("outline color=negative")
 
             ui.label("Assign this task to students").classes("text-subtitle1 q-mt-sm")
             student_select = ui.select(
