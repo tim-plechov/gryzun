@@ -19,10 +19,11 @@ either of them -- they keep running unchanged.
 
 ## One-time setup
 
-1. Apply the additive migration against the same Postgres the rest of
-   Gryzun uses:
+1. Apply the additive migrations against the same Postgres the rest of
+   Gryzun uses (run them in order):
    ```
    psql "postgresql://<user>:<password>@<host>:<port>/<dbname>" -f webapp/migrations/001_add_auth_and_assignments.sql
+   psql "postgresql://<user>:<password>@<host>:<port>/<dbname>" -f webapp/migrations/002_add_jupyter_username.sql
    ```
 2. Create the first admin account:
    ```
@@ -49,6 +50,32 @@ elsewhere: copy `webapp/.env.example` to `webapp/.env` and fill it in,
 ```
 python -m webapp.main
 ```
+
+## JupyterHub integration
+
+If a student has a `jupyter_username` on file (set from the Admin page, or
+when they're created), assigning them a task copies its description and
+sample input files into their JupyterHub volume on disk, at
+`<JUPYTER_VOLUMES_ROOT>/jupyterhub-user-<username>/_data/assigned-tasks/<task>/`
+-- the naming DockerSpawner uses by default for one volume per user. This
+is best-effort: the task assignment itself always succeeds even if the
+student has no Jupyter username yet, or their volume doesn't exist yet
+because they've never logged into JupyterHub (the teacher sees which
+students failed and why, and can retry with "Re-copy files to Jupyter"
+once it's fixed).
+
+This needs the host directory bind-mounted into the `webapp` container
+(already wired up in `docker-compose.yml`) and `JUPYTER_VOLUMES_ROOT` set
+correctly for your setup -- see `.env.example`. Two things worth verifying
+on your actual server, since they weren't testable from here:
+- That `jupyterhub-user-<username>/_data` is really the right path for
+  your JupyterHub/DockerSpawner config -- some setups use a different
+  volume naming pattern.
+- That the Jupyter container's own user can actually read the copied
+  files. They're written world-readable (0644/0755), which is usually
+  enough regardless of UID, but if not, set `JUPYTER_CHOWN_UID`
+  (and `JUPYTER_CHOWN_GID`, if different) to chown them to whatever UID
+  Jupyter's container runs as.
 
 ## Layout
 

@@ -86,6 +86,24 @@ services:
       # this container has no Docker socket / Ollama access of its own.
       API_BASE_URL: http://api:8000
       NICEGUI_STORAGE_SECRET: ${WEBAPP_STORAGE_SECRET:?set WEBAPP_STORAGE_SECRET in .env}
+      # Where JupyterHub's per-user Docker volumes live on the host -- see
+      # webapp/data.py's copy_task_to_jupyter(). Mounted at the *same* path
+      # inside the container as on the host so no path translation is
+      # needed. Optional JUPYTER_CHOWN_UID/GID (also set in .env) let you
+      # hand copied files to the UID Jupyter's own container runs as, if it
+      # can't otherwise read root-owned files.
+      JUPYTER_VOLUMES_ROOT: ${JUPYTER_VOLUMES_ROOT:-/data/docker-data/volumes}
+      JUPYTER_CHOWN_UID: ${JUPYTER_CHOWN_UID:-}
+      JUPYTER_CHOWN_GID: ${JUPYTER_CHOWN_GID:-}
+    volumes:
+      # Read-write, and deliberately broad (the whole volumes directory, not
+      # one user's) since JupyterHub creates a new per-user volume the first
+      # time each student logs in -- there's no way to mount only "future
+      # student folders" in advance. This gives the webapp container write
+      # access to every JupyterHub user's files, not just the ones it copies
+      # task materials into. Adjust JUPYTER_VOLUMES_ROOT in .env first if
+      # your JupyterHub uses a different Docker data-root.
+      - ${JUPYTER_VOLUMES_ROOT:-/data/docker-data/volumes}:${JUPYTER_VOLUMES_ROOT:-/data/docker-data/volumes}
     ports:
       - "8080:8080"
 

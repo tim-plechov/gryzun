@@ -107,6 +107,7 @@ def _students_panel() -> None:
             {"name": "email", "label": "Email", "field": "email", "sortable": True, "align": "left"},
             {"name": "student_number", "label": "Student #", "field": "student_number", "sortable": True, "align": "left"},
             {"name": "group_name", "label": "Group", "field": "group_name", "sortable": True, "align": "left"},
+            {"name": "jupyter_username", "label": "Jupyter username", "field": "jupyter_username", "sortable": True, "align": "left"},
             {"name": "has_password", "label": "Password set", "field": "has_password", "align": "left"},
         ],
         rows=[],
@@ -128,6 +129,7 @@ def _students_panel() -> None:
         email_input = ui.input("Email").classes("w-64")
         number_input = ui.input("Student number (optional)").classes("w-40")
         group_input = ui.input("Group (optional)").classes("w-40")
+        jupyter_input = ui.input("Jupyter username (optional)").classes("w-48")
 
     def create() -> None:
         name, email = (name_input.value or "").strip(), (email_input.value or "").strip()
@@ -135,12 +137,17 @@ def _students_panel() -> None:
             ui.notify("Full name and email are required.", color="negative")
             return
         student_id, temp_password = data.create_student_account(
-            name, email, (number_input.value or "").strip() or None, (group_input.value or "").strip() or None
+            name,
+            email,
+            (number_input.value or "").strip() or None,
+            (group_input.value or "").strip() or None,
+            (jupyter_input.value or "").strip() or None,
         )
         name_input.value = ""
         email_input.value = ""
         number_input.value = ""
         group_input.value = ""
+        jupyter_input.value = ""
         refresh()
         _show_temp_password(name, temp_password)
 
@@ -158,5 +165,19 @@ def _students_panel() -> None:
         _show_temp_password(label, temp_password)
 
     ui.button("Reset password", on_click=reset_pw).props("outline")
+
+    with ui.row().classes("items-center"):
+        jupyter_edit_input = ui.input("Jupyter username").classes("w-48")
+
+        def set_jupyter() -> None:
+            if not picker.value:
+                ui.notify("Pick a student first.", color="negative")
+                return
+            data.set_jupyter_username(picker.value, (jupyter_edit_input.value or "").strip() or None)
+            jupyter_edit_input.value = ""
+            ui.notify("Jupyter username saved.", color="positive")
+            refresh()
+
+        ui.button("Save Jupyter username", on_click=set_jupyter).props("outline")
 
     refresh()

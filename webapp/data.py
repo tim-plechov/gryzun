@@ -10,6 +10,13 @@ here as new queries using db.py's own db.get_conn() connection helper,
 against the additive-only columns/table from
 webapp/migrations/001_add_auth_and_assignments.sql.
 
+Assigning a task also best-effort copies its description + sample inputs
+into the student's JupyterHub volume on disk (see copy_task_to_jupyter) --
+a second exception to "direct DB access", this one reaching past the
+database into the host filesystem where JupyterHub's per-user Docker
+volumes live (must be bind-mounted into this container -- see
+docker-compose.yml).
+
 Submitting a solution is the one exception to "direct DB access": grading
 requires the sandboxed execution pipeline (grader.py/sandbox.py, which
 need the Docker socket and an Ollama server) that already runs inside the
@@ -20,6 +27,7 @@ over HTTP, exactly like Grader/student_interface.ipynb already does.
 """
 
 import os
+import re
 import sys
 import zipfile
 from pathlib import Path
@@ -42,6 +50,18 @@ if str(_GRADER_DIR) not in sys.path:
 import db  # noqa: E402  (Grader/db.py, unmodified -- see module docstring)
 
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
+
+# Where JupyterHub's per-user Docker volumes live on the host (must be
+# bind-mounted into this container at the same path -- see docker-compose.yml
+# and webapp/README.md). Assumed layout: <root>/jupyterhub-user-<username>/_data
+# is that user's home directory, per DockerSpawner's default volume naming.
+# JUPYTER_CHOWN_UID/GID are optional -- set them if the Jupyter container's
+# user can't read root-owned files; unset, copied files are left as
+# whatever this (root, by default) container's umask produces (0o644/0o755,
+# explicitly set below, which is world-readable regardless of owner).
+JUPYTER_VOLUMES_ROOT = Path(os.getenv("JUPYTER_VOLUMES_ROOT", "/data/docker-data/volumes"))
+JUPYTER_CHOWN_UID = os.getenv("JUPYTER_CHOWN_UID")
+JUPYTER_CHOWN_GID = os.getenv("JUPYTER_CHOWN_GID")
 
 # Direct re-exports: pages import everything through `data`, but these are
 # plain pass-throughs to the existing db.py for functionality this app
@@ -154,25 +174,49 @@ def list_students_full():
     with db.get_conn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
             cur.execute(
-                "SELECT id, full_name, email, student_number, group_name, "
+                "SELECT id, full_name, email, student_number, group_name, jupyter_username, "
                 "(password_hash IS NOT NULL) AS has_password "
                 "FROM students ORDER BY full_name"
             )
             return [dict(r) for r in cur.fetchall()]
 
 
-def create_student_account(full_name: str, email: str, student_number: str | None = None, group_name: str | None = None) -> tuple[str, str]:
+def get_student_full(student_id: str) -> dict | None:
+    """Unlike db.get_student(), also includes jupyter_username."""
+    with db.get_conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            cur.execute(
+                "SELECT id, full_name, email, student_number, group_name, jupyter_username FROM students WHERE id = %s",
+                (student_id,),
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+
+def create_student_account(
+    full_name: str,
+    email: str,
+    student_number: str | None = None,
+    group_name: str | None = None,
+    jupyter_username: str | None = None,
+) -> tuple[str, str]:
     """Teacher-or-admin. Returns (student_id, temp_password)."""
     temp_password = generate_temp_password()
     with db.get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO students (full_name, email, student_number, group_name, password_hash) "
-                "VALUES (%s, %s, %s, %s, %s) RETURNING id",
-                (full_name, email, student_number or None, group_name or None, hash_password(temp_password)),
+                "INSERT INTO students (full_name, email, student_number, group_name, jupyter_username, password_hash) "
+                "VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+                (full_name, email, student_number or None, group_name or None, jupyter_username or None, hash_password(temp_password)),
             )
             student_id = cur.fetchone()[0]
     return str(student_id), temp_password
+
+
+def set_jupyter_username(student_id: str, jupyter_username: str | None) -> None:
+    with db.get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE students SET jupyter_username = %s WHERE id = %s", (jupyter_username or None, student_id))
 
 
 def list_groups() -> list[str]:
@@ -227,7 +271,13 @@ def list_assignees(task_id: str):
             return [dict(r) for r in cur.fetchall()]
 
 
-def assign_task(task_id: str, student_ids: list[str], assigned_by: str) -> None:
+def assign_task(task_id: str, student_ids: list[str], assigned_by: str) -> list[dict]:
+    """Assigns the task, then best-effort copies its description + sample
+    inputs into each student's JupyterHub volume. The DB assignment always
+    succeeds even if a student has no Jupyter username set yet, or their
+    volume doesn't exist yet (e.g. they've never logged into JupyterHub).
+    Returns one result dict per student: {student_id, full_name, jupyter_error}
+    -- jupyter_error is None on success."""
     with db.get_conn() as conn:
         with conn.cursor() as cur:
             for student_id in student_ids:
@@ -237,18 +287,24 @@ def assign_task(task_id: str, student_ids: list[str], assigned_by: str) -> None:
                     (task_id, student_id, assigned_by),
                 )
 
+    results = []
+    for student_id in student_ids:
+        student = get_student_full(student_id)
+        error = copy_task_to_jupyter(task_id, student) if student else "student not found"
+        results.append({
+            "student_id": student_id,
+            "full_name": student["full_name"] if student else student_id,
+            "jupyter_error": error,
+        })
+    return results
 
-def assign_task_to_group(task_id: str, group_name: str, assigned_by: str) -> None:
+
+def assign_task_to_group(task_id: str, group_name: str, assigned_by: str) -> list[dict]:
     with db.get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT id FROM students WHERE group_name = %s", (group_name,))
-            student_ids = [r[0] for r in cur.fetchall()]
-            for student_id in student_ids:
-                cur.execute(
-                    "INSERT INTO task_assignments (task_id, student_id, assigned_by) VALUES (%s, %s, %s) "
-                    "ON CONFLICT (task_id, student_id) DO NOTHING",
-                    (task_id, student_id, assigned_by),
-                )
+            student_ids = [str(r[0]) for r in cur.fetchall()]
+    return assign_task(task_id, student_ids, assigned_by)
 
 
 def unassign_task(task_id: str, student_id: str) -> None:
@@ -291,26 +347,83 @@ def student_get_submission(student_id: str, submission_id: str):
     return _student_view(submission)
 
 
-def student_download_package(task_id: str, student_id: str):
-    """Sample INPUT files only for one assigned task, as a zip Path --
-    students get the input format, not the expected output (unlike the
-    teacher's build_task_package, which includes both so a teacher can
-    verify a task's own sample cases). Hidden ('test') files are never
-    included either way. Gated by assignment, not open to any task_id."""
-    if not is_task_assigned(task_id, student_id):
-        return None
+def _gather_sample_materials(task_id: str) -> tuple[dict, list[tuple[str, bytes]]] | None:
+    """Task description + sample INPUT files only (never expected output,
+    never hidden 'test' cases) -- the material a student is allowed to see
+    for a task, shared by the zip-download and Jupyter-copy paths below."""
     task = db.get_task(task_id)
     if task is None:
         return None
     sample_datasets = [d for d in db.get_task_datasets(task_id) if d["dataset_type"] == "sample"]
+    files = [("task.md", f"# {task['title']}\n\n{task['description']}\n".encode("utf-8"))]
+    for i, ds in enumerate(sample_datasets, 1):
+        suffix = Path(ds["input_storage_key"]).suffix
+        files.append((f"sample_{i}_input{suffix}", db.read_file_bytes(ds["input_storage_key"])))
+    return task, files
+
+
+def _folder_slug(text: str) -> str:
+    slug = re.sub(r"[^A-Za-z0-9]+", "-", text.strip().lower()).strip("-")
+    return slug or "task"
+
+
+def student_download_package(task_id: str, student_id: str):
+    """Sample INPUT files only for one assigned task, as a zip Path --
+    students get the input format, not the expected output (unlike the
+    teacher's build_task_package, which includes both so a teacher can
+    verify a task's own sample cases). Gated by assignment, not open to
+    any task_id."""
+    if not is_task_assigned(task_id, student_id):
+        return None
+    gathered = _gather_sample_materials(task_id)
+    if gathered is None:
+        return None
+    _task, files = gathered
 
     zip_path = db.DOWNLOADS_ROOT / f"{task_id}-sample-inputs.zip"
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr("task.md", f"# {task['title']}\n\n{task['description']}\n")
-        for i, ds in enumerate(sample_datasets, 1):
-            in_suffix = Path(ds["input_storage_key"]).suffix
-            zf.writestr(f"sample_{i}_input{in_suffix}", db.read_file_bytes(ds["input_storage_key"]))
+        for name, content in files:
+            zf.writestr(name, content)
     return zip_path
+
+
+def copy_task_to_jupyter(task_id: str, student: dict) -> str | None:
+    """Copies a task's description + sample inputs into one student's
+    JupyterHub volume (<JUPYTER_VOLUMES_ROOT>/jupyterhub-user-<username>/_data/
+    assigned-tasks/<task-slug>/). Returns an error message on failure (no
+    Jupyter username on file, volume doesn't exist yet, filesystem error),
+    or None on success. Never raises -- this is a best-effort side effect
+    of assignment, not something that should block it."""
+    username = (student.get("jupyter_username") or "").strip()
+    if not username:
+        return "no Jupyter username on file"
+
+    gathered = _gather_sample_materials(task_id)
+    if gathered is None:
+        return "task not found"
+    task, files = gathered
+
+    user_root = JUPYTER_VOLUMES_ROOT / f"jupyterhub-user-{username}" / "_data"
+    if not user_root.is_dir():
+        return f"no JupyterHub volume found at {user_root} (has this student ever logged into JupyterHub?)"
+
+    dest = user_root / "assigned-tasks" / f"{_folder_slug(task['title'])}-{task_id[:8]}"
+    try:
+        dest.mkdir(parents=True, exist_ok=True)
+        os.chmod(dest, 0o755)
+        for name, content in files:
+            path = dest / name
+            path.write_bytes(content)
+            os.chmod(path, 0o644)
+        if JUPYTER_CHOWN_UID is not None:
+            uid = int(JUPYTER_CHOWN_UID)
+            gid = int(JUPYTER_CHOWN_GID) if JUPYTER_CHOWN_GID else uid
+            os.chown(dest, uid, gid)
+            for name, _content in files:
+                os.chown(dest / name, uid, gid)
+    except OSError as e:
+        return f"could not write files: {e}"
+    return None
 
 
 def student_submit_solution(student: dict, task_id: str, filename: str, content: bytes) -> dict:

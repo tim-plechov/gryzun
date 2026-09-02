@@ -186,12 +186,23 @@ def _manage_tasks_panel(account: dict) -> None:
                 label="Students",
             ).classes("w-full").props("use-chips")
 
+            def notify_assignment_results(results: list[dict]) -> None:
+                failed = [r for r in results if r["jupyter_error"]]
+                if not failed:
+                    ui.notify(f"Assigned {len(results)} student(s); task files copied to their Jupyter folders.", color="positive")
+                    return
+                detail = "; ".join(f"{r['full_name']}: {r['jupyter_error']}" for r in failed)
+                ui.notify(
+                    f"Assigned {len(results)} student(s), but Jupyter copy failed for {len(failed)}: {detail}",
+                    color="warning", multi_line=True, close_button=True,
+                )
+
             def assign_selected() -> None:
                 if not student_select.value:
                     ui.notify("Pick at least one student.", color="negative")
                     return
-                data.assign_task(task_id, student_select.value, account["id"])
-                ui.notify("Assigned.", color="positive")
+                results = data.assign_task(task_id, student_select.value, account["id"])
+                notify_assignment_results(results)
                 render_assignment_area()
 
             ui.button("Assign selected students", on_click=assign_selected)
@@ -203,8 +214,8 @@ def _manage_tasks_panel(account: dict) -> None:
                     if not group_select.value:
                         ui.notify("Pick a group.", color="negative")
                         return
-                    data.assign_task_to_group(task_id, group_select.value, account["id"])
-                    ui.notify(f"Assigned to group {group_select.value}.", color="positive")
+                    results = data.assign_task_to_group(task_id, group_select.value, account["id"])
+                    notify_assignment_results(results)
                     render_assignment_area()
 
                 ui.button("Assign group", on_click=assign_group)
@@ -226,7 +237,7 @@ def _manage_tasks_panel(account: dict) -> None:
                 ).classes("w-full")
 
                 unassign_select = ui.select(
-                    {a["id"]: a["full_name"] for a in assignees}, label="Unassign a student"
+                    {a["id"]: a["full_name"] for a in assignees}, label="Manage an assignee"
                 ).classes("w-72")
 
                 def unassign() -> None:
@@ -236,7 +247,18 @@ def _manage_tasks_panel(account: dict) -> None:
                     ui.notify("Unassigned.")
                     render_assignment_area()
 
+                def recopy() -> None:
+                    if not unassign_select.value:
+                        return
+                    student = data.get_student_full(unassign_select.value)
+                    error = data.copy_task_to_jupyter(task_id, student) if student else "student not found"
+                    if error:
+                        ui.notify(f"Jupyter copy failed: {error}", color="negative")
+                    else:
+                        ui.notify("Copied to their Jupyter folder.", color="positive")
+
                 ui.button("Unassign", on_click=unassign).props("outline color=negative")
+                ui.button("Re-copy files to Jupyter", on_click=recopy).props("outline")
 
     task_picker.on_value_change(render_assignment_area)
 
